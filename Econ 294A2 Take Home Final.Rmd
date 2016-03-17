@@ -1,0 +1,286 @@
+---
+title: "Econ 294A2 Takehome Final"
+author: "Yuan Wu"
+date: "March 15, 2016"
+output: html_document
+---
+
+# Factors Contritube to Flight Delays and Cancelations
+
+    There are multiple factors that contribute to delays and cancelations at airports. By using the nycflights13 data from New York airport in 2013, we will try to dicuss several potentail factors. 
+
+```{r, echo=F,eval=T,message=F,warning=F}
+library(RSQLite)
+library(dplyr) 
+library(nycflights13)
+library(mfx)
+library(ggplot2)
+library(scales)
+
+db<-nycflights13_sqlite()
+flights_sqlite<- tbl(db, "flights")
+flights_sqlite<-flights_sqlite %>% 
+  mutate(canceled = if(is.na(arr_time)){1}else{0},
+         takeoffdelay = if(dep_delay>0){1}else{0})
+weather_sqlite<- tbl(db, "weather")
+planes_sqlite<- tbl(db, "planes")
+planes_sqlite<- planes_sqlite %>% dplyr::rename(manuyear=year)
+flights <- flights_sqlite %>% collect()
+planes <- planes_sqlite %>% collect()
+weather <- weather_sqlite %>% collect()
+subtotal <- left_join(flights, planes, by = "tailnum")
+total<-left_join(subtotal, weather, by=c("year","month","day","hour"))
+totalcanceled<-total[!(total$canceled==1),]
+totaldelayed<-total[!(total$takeoffdelay==1),]
+```
+
+    We first run robust probit regressions of weather conditions on cancelations and delays, report marginal effects.
+######Probit regression marginal effect of weather condition on cancelations
+```{r, echo=F,eval=T,message=F,warning=F}
+probitmfx(canceled~temp+dewp+humid+humid+wind_dir+wind_speed+wind_gust+pressure+visib, data=total,robust = T)
+```
+######Probit regression marginal effect of weather condition on delays
+```{r, echo=F,eval=T,message=F,warning=F}
+probitmfx(takeoffdelay~temp+dewp+humid+humid+wind_dir+wind_speed+wind_gust+pressure+visib, data=total,robust = T)
+```
+    
+    We can see that the factors that contribute to a cancelation or a delay are dew tempreture and wind speed, with each tempreture unit increase in dew tempreture increase 0.6% chance of cancelation or dealy, and each unit in wind speed increase creates a 0.04% chance increase in delay and 0.0002% chance increase in cancelation. 
+
+    Then we check if date and time have any effects on causing cancelations and delays. 
+    We conduct histograms to see the porbability densities of cancelations and delays in hourly, daily and monthly manners.
+```{r, echo=F,eval=T,message=F,warning=F}
+cancelhourplot<- ggplot(
+  data = totalcanceled,
+  aes(x=hour, 
+      y=..density..)) +  
+  geom_histogram(binwidth = 1) +
+  ggtitle("Hourly Cancelation")
+
+canceldayplot<- ggplot(
+  data = totalcanceled,
+  aes(x=day, 
+      y=..density..)) +  
+  geom_histogram(binwidth = 1) +
+  ggtitle("Daily Cancelation")
+
+cancelmonthplot<- ggplot(
+  data = totalcanceled,
+  aes(x=month, 
+      y=..density..)) +  
+  geom_histogram(binwidth = 1) +
+  ggtitle("Monthly Cancelation")
+
+delayhourplot<- ggplot(
+  data = totaldelayed,
+  aes(x=hour, 
+      y=..density..)) +  
+  geom_histogram(binwidth = 1) +
+  ggtitle("Hourly Delay")
+
+delaydayplot<- ggplot(
+  data = totaldelayed,
+  aes(x=day, 
+      y=..density..)) +  
+  geom_histogram(binwidth = 1) +
+  ggtitle("Daily Delay")
+
+delaymonthplot<- ggplot(
+  data = totaldelayed,
+  aes(x=month, 
+      y=..density..)) +  
+  geom_histogram(binwidth = 1) +
+  ggtitle("Monthly Delay")
+```
+```{r, echo=F,eval=T,message=F,warning=F}
+cancelhourplot
+canceldayplot
+cancelmonthplot
+delayhourplot
+delaydayplot
+delaymonthplot
+```
+    
+    Infering from the histograms, we can see the probability of delay and cancelations are consistant throughout each month and the whole year. They varies in different times of the day, and start to increase at 07:00. 09:00 has the highest number of cancelations and delays. Delays and cancelations dip during noons and recover during afternoons, and only decrease after 20:00. 
+    
+    
+    Next step, we check if destination has any correlation between causing cancelations and delays. 
+    We will show the ratio of delays/cancelations to total number of flights in each destination.
+```{r, echo=F,eval=T,message=F,warning=F}
+totaldestfreq<-data.frame(table(total$dest))
+totaldestcancel<-aggregate(canceled ~ dest, total, sum)
+totaldestdelay<-aggregate(takeoffdelay ~ dest, total, sum)
+totaldestfreq$cancelratio<-totaldestcancel$canceled/totaldestfreq$Freq
+totaldestfreq$delayratio<-totaldestdelay$takeoffdelay/totaldestfreq$Freq
+```
+######Top 5 destinations with lowest cancelation rate
+```{r,echo=F,eval=T,message=F,warning=F}
+totaldestfreq<-totaldestfreq[order(totaldestfreq$cancelratio),]
+head(totaldestfreq,n=5)
+```
+######Top 5 destinations with highest cancelation rate
+```{r,echo=F,eval=T,message=F,warning=F}
+tail(totaldestfreq,n=5)
+```
+######Top 5 destinations with lowest delay rate
+```{r,echo=F,eval=T,message=F,warning=F}
+totaldestfreq<-totaldestfreq[order(totaldestfreq$delayratio),]
+head(totaldestfreq,n=5)
+```
+######Top 5 destinations with highest cancelation rate
+```{r,echo=F,eval=T,message=F,warning=F}
+tail(totaldestfreq,n=5)
+```
+
+    From this we can see that the top and bottom 5 destinations with the cancelation and delayed ratios
+    
+    Finally,We conduct test on probability of cancelations and delays on characteristics of planes. 
+    We run density regressions on planes been canced and delayed according to their number of seats, or the size of the plane. 
+```{r, echo=F,eval=T,message=F,warning=F}
+seatscancel<- ggplot(
+  data = totalcanceled,
+  aes(x=seats, 
+      y=..density.. )) +  
+  geom_histogram(binwidth = 1) +
+  ggtitle("Seats Cancelation")
+
+seatsdelay<- ggplot(
+  data = totaldelayed,
+  aes(x=seats, 
+      y=..density.. )) +  
+  geom_histogram(binwidth = 1) +
+  ggtitle("Seats Delay")
+```
+```{r, echo=F,eval=T,message=F,warning=F}
+seatscancel
+seatsdelay
+```
+    
+    From the seats to density plot, we can see that small planes(~50 seats) and medium planes(~200 seats) are more likely to be canceled or delayed. 
+    
+    Then we check the cancelation and delay ratio between different types.
+```{r, echo=F,eval=T,message=F,warning=F}
+totaltypefreq<-data.frame(table(total$type))
+totaltypecancel<-aggregate(canceled ~ type, total, sum)
+totaltypedelay<-aggregate(takeoffdelay ~ type, total, sum)
+totaltypefreq$cancelratio<-totaltypecancel$canceled/totaltypefreq$Freq
+totaltypefreq$delayratio<-totaltypedelay$takeoffdelay/totaltypefreq$Freq
+```
+
+```{r,echo=F,eval=T,message=F,warning=F}
+typecancel<- ggplot(
+  data = totaltypefreq,
+  aes(x=Var1)) +  
+  geom_bar(aes(weight = cancelratio)) +
+  ggtitle("Type Cancel")
+typedelay<- ggplot(
+  data = totaltypefreq,
+  aes(x=Var1)) +  
+  geom_bar(aes(weight = delayratio)) +
+  ggtitle("Type Delay")
+```
+```{r,echo=F,eval=T,message=F,warning=F}
+typecancel
+typedelay
+```
+    
+    There is no significant diffence in dealys between different type of planes, but fixed wing single engine planes are more likely to be canceled. 
+    
+    Then we check if the type of engines used makes any difference by checking the cancelation/delay ratio.
+    ```{r, echo=F,eval=T,message=F,warning=F}
+totalenginefreq<-data.frame(table(total$engine))
+totalenginecancel<-aggregate(canceled ~ engine, total, sum)
+totalenginedelay<-aggregate(takeoffdelay ~ engine, total, sum)
+totalenginefreq$cancelratio<-totalenginecancel$canceled/totalenginefreq$Freq
+totalenginefreq$delayratio<-totalenginedelay$takeoffdelay/totalenginefreq$Freq
+```
+
+```{r,echo=F,eval=T,message=F,warning=F}
+enginecancel<- ggplot(
+  data = totalenginefreq,
+  aes(x=Var1)) +  
+  geom_bar(aes(weight = cancelratio)) +
+  ggtitle("Engine Cancel")
+enginedelay<- ggplot(
+  data = totalenginefreq,
+  aes(x=Var1)) +  
+  geom_bar(aes(weight = delayratio)) +
+  ggtitle("Engine Delay")
+```
+```{r,echo=F,eval=T,message=F,warning=F}
+enginecancel
+enginedelay
+```
+    
+    Reciprocating engines are more likely to be canceled, while 4 Cycle engines are more likely to be delayed.
+    
+    Next is the manufacturer of the plane.
+    ```{r, echo=F,eval=T,message=F,warning=F}
+totalmanufreq<-data.frame(table(total$manufacturer))
+totalmanucancel<-aggregate(canceled ~ manufacturer, total, sum)
+totalmanudelay<-aggregate(takeoffdelay ~ manufacturer, total, sum)
+totalmanufreq$cancelratio<-totalmanucancel$canceled/totalmanufreq$Freq
+totalmanufreq$delayratio<-totalmanudelay$takeoffdelay/totalmanufreq$Freq
+```
+######Top 5 manufacturers with lowest cancelation rate
+```{r,echo=F,eval=T,message=F,warning=F}
+totalmanufreq<-totalmanufreq[order(totalmanufreq$cancelratio),]
+head(totaldestfreq,n=5)
+```
+######Top 5 manufacturers with Highest cancelation rate
+```{r,echo=F,eval=T,message=F,warning=F}
+tail(totaldestfreq,n=5)
+```
+######Top 5 manufacturers with lowest delay rate
+```{r,echo=F,eval=T,message=F,warning=F}
+totalmanufreq<-totalmanufreq[order(totalmanufreq$delayratio),]
+head(totalmanufreq,n=5)
+```
+######Top 5 manufacturers with highest delay rate
+```{r,echo=F,eval=T,message=F,warning=F}
+tail(totalmanufreq,n=5)
+```    
+    
+    Here are the the top 5 best and worst manufactures on their cancelation and delay to total flight ratios.
+    
+    Then the model of the planes.
+    ```{r, echo=F,eval=T,message=F,warning=F}
+totalmodelfreq<-data.frame(table(total$model))
+totalmodelcancel<-aggregate(canceled ~ model, total, sum)
+totalmodeldelay<-aggregate(takeoffdelay ~ model, total, sum)
+totalmodelfreq$cancelratio<-totalmodelcancel$canceled/totalmodelfreq$Freq
+totalmodelfreq$delayratio<-totalmodeldelay$takeoffdelay/totalmodelfreq$Freq
+```
+######Top 5 models with lowest cancelation rate
+```{r,echo=F,eval=T,message=T,warning=F}
+totalmodelfreq<-totalmodelfreq[order(totalmodelfreq$cancelratio),]
+head(totalmodelfreq,n=5)
+```
+######Top 5 models with highest cancelation rate
+```{r,echo=F,eval=T,message=T,warning=F}
+tail(totalmodelfreq,n=5)
+```
+######Top 5 models with lowest delay rate
+```{r,echo=F,eval=T,message=T,warning=F}
+totalmanufreq<-totalmodelfreq[order(totalmodelfreq$delayratio),]
+head(totalmodelfreq,n=5)
+```
+######Top 5 models with highest delay rate
+```{r,echo=F,eval=T,message=T,warning=F}
+tail(totalmodelfreq,n=5)
+```
+    
+    Here are the the top 5 best and worst models on their cancelation and delay to total flight ratios.
+    
+    Last we run probit regressions for cancelation and delay on the year the planes been manufactured. 
+######Probit regression marginal effect of manufacture year on cancelations
+```{r,echo=F,eval=T,message=T,warning=F}
+probitmfx(canceled~manuyear, data=total,robust = T)
+```
+######Probit regression marginal effect of manufacture year on delays
+```{r,echo=F,eval=T,message=T,warning=F}
+probitmfx(takeoffdelay~manuyear, data=total,robust = T)
+```
+    
+    The newer the plane, the more likely it will be delayed. On the otherside, the older the plane, the more likely it will be canceled.
+    
+    So, based on our analysis, we can conclude that a flight is more likely to be canceled or delayed if it was during the day between 07:00 and 20:00, with high dew temprature and high wind speed condition, combined with low visibility, airpressure, humidity and temprature. Small planes and medium size planes are more likely to be delayed or canceled, possibly due to the fact that the medium size planes are the most commonly used, and small planes are more likely to be impacted by weather condition. Also, older planes are likely to be canceled, while newer ones are more likely to be delayed. Different destinations, manufactuer of the planes and the specific models also contribute to delay or cancelation, so certain locations and planes should be avoided. 
